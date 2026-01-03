@@ -2,6 +2,7 @@
 #pragma once
 #include <vector>
 #include <string>
+
 // tbb
 #include "oneapi/tbb.h"
 #include "oneapi/tbb/parallel_reduce.h"
@@ -17,10 +18,21 @@
 #define RIGID_DEBUGGER
 #undef  RIGID_DEBUGGER
 
+#define RIGID_USE_CUDA
+// #undef  RIGID_USE_CUDA
+
 using I32 = int;
 using I64 = long int;
 using F32 = float;
 using F64 = double;
+
+#if defined RIGID_USE_CUDA
+#include <cuda_runtime.h>
+using I32_3 = int3;
+using F32_3 = float3;
+using F32_4 = float4;
+#endif
+using U_I32 = unsigned int;
 
 template <typename T>
 using Vector = std::vector<T>;

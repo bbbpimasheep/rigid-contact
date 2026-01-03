@@ -8,6 +8,8 @@
 
 #include "type.h"
 
+namespace gpu { class BVHBuilder_GPU; }
+
 
 struct BVHNode {
   AABB bounds;
@@ -21,11 +23,14 @@ struct BVHNode {
 
 class BVH {
 public:
-  BVH() = default;
+  BVH();
+  ~BVH();
 
-  void build(const Vector<Vec3>& vertices,
-             const Vector<Trig>& triangles);
+  void build(const Vector<Vec3>& vertices, const Vector<Trig>& triangles);
+  void buildGPU(const Vector<Vec3>& vertices, const Vector<Trig>& triangles);
   void clear();
+  gpu::BVHBuilder_GPU* gpu_builder() const { return m_gpu_builder.get(); }
+  bool has_GPU_data() const { return m_gpu_builder != nullptr; }
   bool is_built()  const { return m_root_index >= 0; }
   I32 root_index() const { return m_root_index; }
   I32 node_count() const { return m_nodes.size(); }
@@ -53,6 +58,8 @@ private:
   I32 leaf_prim_count     = 4;
   I32 max_depth           = 64;
   F32 centroid_epsilon    = 1e-4;
+
+  std::unique_ptr<gpu::BVHBuilder_GPU> m_gpu_builder;
 };
 
 inline Vec3 vec3_pos_inf() {

@@ -3,6 +3,9 @@
 #include "bvh.h"
 
 
+BVH::BVH() = default;
+BVH::~BVH() = default;
+
 void BVH::clear() {
   m_nodes.clear(); prim_indices.clear(); prims.clear();
   m_root_index = -1;
@@ -105,3 +108,38 @@ I32 BVH::build_node(I32 first, I32 last, I32 depth) {
 
   return node_index;
 }
+
+#if defined RIGID_USE_CUDA
+#include "gpu_bvh.cuh"
+
+void BVH::buildGPU(const Vector<Vec3>& vertices, 
+                   const Vector<Trig>& triangles) {
+  clear();
+  if (triangles.empty()) { return; }
+  m_gpu_builder = std::make_unique<gpu::BVHBuilder_GPU>();
+  m_gpu_builder->build(vertices, triangles);
+
+  Vector<gpu::BVHNode_d> gpu_nodes;
+  m_gpu_builder->copy_to_host(gpu_nodes, prim_indices);
+
+  m_nodes.resize(gpu_nodes.size());
+  for (size_t i = 0; i < gpu_nodes.size(); ++i) {
+    const auto& gn = gpu_nodes[i];
+    m_nodes[i].bounds.min = Vec3(gn.bounds.min.x, gn.bounds.min.y, gn.bounds.min.z);
+    m_nodes[i].bounds.max = Vec3(gn.bounds.max.x, gn.bounds.max.y, gn.bounds.max.z);
+    m_nodes[i].left = gn.left;
+    m_nodes[i].right = gn.right;
+    m_nodes[i].first_prim = gn.first_prim;
+    m_nodes[i].prim_count = gn.prim_count;
+  }
+  m_root_index = 0;
+}
+
+#else
+
+void BVH::buildGPU(const Vector<Vec3>& vertices, 
+                   const Vector<Trig>& triangles) {
+  build(vertices, triangles);
+}
+
+#endif

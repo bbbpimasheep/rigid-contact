@@ -2,10 +2,15 @@
 #include <limits>
 
 #include "collision.h"
+#include "gpu_collision.cuh"
 
 
 void CollisionSolver::clear() { m_contacts.clear(); }
 void CollisionSolver::detect_collisions(Scene& scene) {
+  if (m_use_gpu) { 
+    detect_collisions_gpu(scene); return; 
+  }
+
   clear();
   Environment& env = scene.environment();
   I32 body_count   = scene.rigid_body_count();
@@ -297,3 +302,129 @@ void CollisionSolver::traverse_bvh_point(
       );
   }
 }
+
+#if defined RIGID_USE_CUDA
+#include "gpu_collision.cuh"
+#include "gpu_broadphase.cuh"
+
+CollisionSolver::CollisionSolver() : m_use_gpu(true) {
+  m_gpu_detector = std::make_unique<gpu::CollisionDetector_GPU>();
+}
+CollisionSolver::~CollisionSolver() = default;
+
+void CollisionSolver::detect_collisions_gpu(Scene& scene) {
+  clear();
+  Environment& env = scene.environment();
+  I32 body_count   = scene.rigid_body_count();
+  // Check Body vs Environment
+  for (I32 i = 0; i < body_count; ++i) {
+    RigidBody* body = scene.rigid_body(i);
+    if (!body || !body->has_mesh()) continue;
+
+    const BVH& bvh = body->mesh().bvh();
+    if (!bvh.has_GPU_data()) continue;
+
+    m_gpu_detector->set_BVH(bvh.gpu_builder());
+
+    gpu::BodyTransform_d transform;
+    const BodyState& state = body->state();
+    transform.position = make_float3(state.position.x(), state.position.y(), state.position.z());
+    transform.orientation = make_float4(
+      state.orientation.x(), state.orientation.y(), 
+      state.orientation.z(), state.orientation.w()
+    );
+
+    Vector<gpu::Plane_d> planes(Environment::boundary_count);
+    for (int p = 0; p < Environment::boundary_count; ++p) {
+      const Plane& plane = env.plane(static_cast<Environment::boundary_id>(p));
+      planes[p].normal = make_float3(plane.normal.x(), plane.normal.y(), plane.normal.z());
+      planes[p].offset = plane.offset;
+    }
+
+    Vector<gpu::Contact_d> gpu_contacts;
+    m_gpu_detector->detect_body_environment(i, transform, planes.data(), planes.size(), gpu_contacts);
+    // fprintf(stderr, "Check gpu_contacts.size():\n");
+    // fprintf(stderr, "Check gpu_contacts.size(): %d\n", gpu_contacts.size());
+    convert_gpu_contacts(gpu_contacts);
+  }
+  // Check Body vs Body
+  Vector<std::pair<I32, I32>> collision_pairs;
+  broadphase_gpu(scene, collision_pairs);
+
+  for (const auto& pair : collision_pairs) {
+    I32 i = pair.first;
+    I32 j = pair.second;
+    
+    RigidBody* body_a = scene.rigid_body(i);
+    RigidBody* body_b = scene.rigid_body(j);
+    
+    if (!body_a || !body_b) continue;
+    if (!body_a->has_mesh() || !body_b->has_mesh()) continue;
+    
+    const BVH& bvh_a = body_a->mesh().bvh();
+    const BVH& bvh_b = body_b->mesh().bvh();
+    if (!bvh_a.has_GPU_data() || !bvh_b.has_GPU_data()) continue;
+    
+    gpu::BodyTransform_d transform_a, transform_b;
+    const BodyState& state_a = body_a->state();
+    const BodyState& state_b = body_b->state();
+    transform_a.position    = make_float3(state_a.position.x(), state_a.position.y(), state_a.position.z());
+    transform_a.orientation = make_float4(state_a.orientation.x(), state_a.orientation.y(), 
+                                          state_a.orientation.z(), state_a.orientation.w());
+    transform_b.position    = make_float3(state_b.position.x(), state_b.position.y(), state_b.position.z());
+    transform_b.orientation = make_float4(state_b.orientation.x(), state_b.orientation.y(), 
+                                          state_b.orientation.z(), state_b.orientation.w());
+    Vector<gpu::Contact_d> gpu_contacts;
+    m_gpu_detector->detect_body_body(
+      i, transform_a, bvh_a.gpu_builder(),
+      j, transform_b, bvh_b.gpu_builder(),
+      gpu_contacts
+    );
+    convert_gpu_contacts(gpu_contacts);
+  }
+}
+void CollisionSolver::convert_gpu_contacts(const Vector<gpu::Contact_d>& gpu_contacts) {
+  for (const auto& gcontact : gpu_contacts) {
+    Contact contact;
+    contact.body_index_a  = gcontact.body_index_a;
+    contact.body_index_b  = gcontact.body_index_b;
+    contact.position      = Vec3(gcontact.position.x, gcontact.position.y, gcontact.position.z);
+    contact.normal        = Vec3(gcontact.normal.x, gcontact.normal.y, gcontact.normal.z);
+    contact.depth         = gcontact.depth;
+    m_contacts.push_back(contact);
+  }
+}
+void CollisionSolver::broadphase_gpu(Scene& scene, Vector<std::pair<I32, I32>>& pairs) {
+  I32 body_count = scene.rigid_body_count();
+  if (body_count < 2) {pairs.clear(); return; }
+
+  Vector<Vec3> aabb_mins(body_count);
+  Vector<Vec3> aabb_maxs(body_count);
+  for (I32 i = 0; i < body_count; ++i) {
+    RigidBody* body = scene.rigid_body(i);
+    if (body && body->has_mesh()) {
+      AABB& wb = body->world_bounds();
+      aabb_mins[i] = wb.min;
+      aabb_maxs[i] = wb.max;
+    } else {
+      aabb_mins[i] = Vec3( 1e30f,  1e30f,  1e30f);
+      aabb_maxs[i] = Vec3(-1e30f, -1e30f, -1e30f);
+    }
+  }
+
+  Vector<gpu::CollisionPair> gpu_pairs;
+  m_gpu_detector->broadphase_detect(aabb_mins, aabb_maxs, gpu_pairs);
+
+  pairs.resize(gpu_pairs.size());
+  for (size_t i = 0; i < gpu_pairs.size(); ++i)
+    pairs[i] = std::make_pair(gpu_pairs[i].body_a, gpu_pairs[i].body_b);
+}
+
+#else
+
+CollisionSolver::CollisionSolver() : m_use_gpu(false) {}
+CollisionSolver::~CollisionSolver() = default;
+void CollisionSolver::detect_collisions_gpu(Scene& scene) { detect_collisions(scene); }
+void CollisionSolver::convert_gpu_contacts(const Vector<gpu::Contact_d>&) {}
+
+#endif

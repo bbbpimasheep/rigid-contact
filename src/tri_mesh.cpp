@@ -87,6 +87,11 @@ void TriMesh::rebuild_BVH() {
   if (m_bounds_dirty) { update_bounds(); }
   if (!m_bvh) { m_bvh = std::make_unique<BVH>(); }
 
+#if defined RIGID_USE_CUDA
+  m_bvh->buildGPU(m_vertices_local, m_triangles);
+#else
   m_bvh->build(m_vertices_local, m_triangles);
+#endif
+
   m_bvh_dirty = false;
 }

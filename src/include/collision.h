@@ -8,6 +8,12 @@
 #include "scene.h"
 #include "bvh.h"
 
+namespace gpu { 
+  class CollisionDetector_GPU; 
+  struct Contact_d;
+  struct CollisionPair;
+}
+
 
 struct Contact {
   Vec3 position;      // World space contact point
@@ -19,11 +25,15 @@ struct Contact {
 
 class CollisionSolver {
 public:
-  CollisionSolver() = default;
+  CollisionSolver();
+  ~CollisionSolver();
 
   void clear();
   void detect_collisions(Scene& scene);
   const Vector<Contact>& contacts() const;
+
+  void set_use_GPU(bool use) { m_use_gpu = use; }
+  bool use_GPU() const { return m_use_gpu; }
 
 private:
   // Checks a single body against the environment boundaries
@@ -61,8 +71,15 @@ private:
     Vec3& closest_pos,
     bool& found
   );
+  
+  void detect_collisions_gpu(Scene& scene);
+  void convert_gpu_contacts(const Vector<gpu::Contact_d>& gpu_contacts);
+  void broadphase_gpu(Scene& scene, Vector<std::pair<I32, I32>>& pairs);
 
   Vector<Contact> m_contacts;
+
+  bool m_use_gpu = true;
+  std::unique_ptr<gpu::CollisionDetector_GPU> m_gpu_detector;
 };
 
 static bool check_triangle_collision(

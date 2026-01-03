@@ -142,6 +142,7 @@ void Integrator::integrate(Scene& scene) {
   for(I32 i=0; i<n_bodies; ++i)
     if(auto body = scene.rigid_body(i)) 
       body->world_bounds();
+  m_collision_solver.set_use_GPU(true);
   m_collision_solver.detect_collisions(scene);
 
   m_mass_matrix.setZero();

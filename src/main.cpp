@@ -103,7 +103,7 @@ int main() {
     sim.step(); // Execute physics step
 
     // Log: Print progress
-    if (frame % 10 == 0)
+    // if (frame % 10 == 0)
       std::cout << "[SIM_INFO] Frame " << frame << " / " << TOTAL_FRAMES << " simulated." << std::endl;
   }
 
