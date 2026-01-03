@@ -60,7 +60,7 @@ __global__ void detect_BVH_plane_collision_kernel(
   Contact_d* contacts,
   I32* contact_count,
   I32 max_contacts,
-  bool* visited_vertices,
+  I32* visited_vertices,
   I32 num_vertices
 ) {
   I32 leaf_id = blockIdx.x * blockDim.x + threadIdx.x;  // one leaf for one thread
@@ -83,7 +83,7 @@ __global__ void detect_BVH_plane_collision_kernel(
   
   for (I32 k = 0; k < 3; ++k) {
       I32 vid = vert_ids[k];
-      bool was_visited = atomicExch((I32*)&visited_vertices[vid], 1);
+      I32 was_visited = atomicExch((I32*)&visited_vertices[vid], 1);
       if (was_visited) continue;
       
       F32_3 v_local = vertices[vid];
@@ -300,10 +300,10 @@ void CollisionDetector_GPU::detect_body_environment(
   }
   cudaMemcpy(d_planes, planes, num_planes * sizeof(Plane_d), cudaMemcpyHostToDevice);
   
-  bool* d_visited;
+  I32* d_visited;
   I32 num_verts = m_bvh->vertex_count();
-  cudaMalloc(&d_visited, num_verts * sizeof(bool));
-  cudaMemset(d_visited, 0, num_verts * sizeof(bool));
+  cudaMalloc(&d_visited, num_verts * sizeof(I32));
+  cudaMemset(d_visited, 0, num_verts * sizeof(I32));
   
   I32 zero = 0;
   cudaMemcpy(d_contact_count, &zero, sizeof(I32), cudaMemcpyHostToDevice);
@@ -315,7 +315,7 @@ void CollisionDetector_GPU::detect_body_environment(
   I32 numBlocks = (m_bvh->triangle_count() + blockSize - 1) / blockSize;
   
   for (I32 p = 0; p < num_planes; ++p) {
-    cudaMemset(d_visited, 0, num_verts * sizeof(bool));
+    cudaMemset(d_visited, 0, num_verts * sizeof(I32));
     
     detect_BVH_plane_collision_kernel<<<numBlocks, blockSize>>>(
       m_bvh->device_vertices(),
